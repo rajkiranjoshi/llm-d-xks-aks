@@ -1,15 +1,15 @@
-RESOURCE_GROUP ?= "llmd-rg-1"
-CLUSTER_NAME ?= "llmd-cluster-1"
-LOCATION ?= "eastus"
-CONTROL_SKU ?= "Standard_D5_v2"
-GPU_SKU ?= "Standard_NC24ads_A100_v4"
-CONTROL_NODE_COUNT ?= "2"
-NODE_COUNT ?= "1"
-SSH_KEY_FILE ?= "${HOME}/.ssh/azure.pub"
-GPU_OPERATOR_VERSION ?= "v25.10.0"
-NODEPOOL_NAME ?= "gpunp"
-GPU_NODE_LABEL ?= "sku=gpu"
-NRI_NAMESPACE ?= "kube-system"
+RESOURCE_GROUP ?= llmd-rg-1
+CLUSTER_NAME ?= llmd-cluster-1
+LOCATION ?= eastus
+CONTROL_SKU ?= Standard_D5_v2
+GPU_SKU ?= Standard_NC4as_T4_v3
+CONTROL_NODE_COUNT ?= 2
+NODE_COUNT ?= 1
+SSH_KEY_FILE ?= ${HOME}/.ssh/azure.pub
+GPU_OPERATOR_VERSION ?= v25.10.0
+NODEPOOL_NAME ?= gpunp
+GPU_NODE_LABEL ?= sku=gpu
+NRI_NAMESPACE ?= kube-system
 CLUSTER_TAGS ?= 
 
 default: help
