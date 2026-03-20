@@ -12,22 +12,39 @@ GPU_NODE_LABEL ?= sku=gpu
 NRI_NAMESPACE ?= kube-system
 CLUSTER_TAGS ?= 
 
+# InfiniBand / Network Operator
+ENABLE_IB ?=
+NETWORK_OPERATOR_VERSION ?= v26.1.0
+NIC_POLICY ?= rdma-shared-device-plugin
+
+ifdef ENABLE_IB
+_NODEPOOL_IB_FLAGS = --os-sku Ubuntu
+_GPU_OP_IB_FLAGS = --set "nfd.enabled=false"
+endif
+
 default: help
 
 help:
 	@echo "Usage:"
 	@echo "   make <target>"
-	@echo "Available targets"
-	@echo "   check-deps          -- check if required binaries are available"
-	@echo "   clean               -- alias to cluster-clear"
-	@echo "   cluster-clean       -- completely delete created AKS cluster"
-	@echo "   cluster             -- cluster-create and cluster-credentials"
-	@echo "   cluster-create      -- create a new AKS cluster "
-	@echo "   cluster-nodepool    -- create and attach the desired GPU nodes as a nodepool"
-	@echo "   cluster-credentials -- download the cluster credentials (kubeconfig)"
-	@echo "   deploy              -- deploy GPU Operator and NRI plugin"
-	@echo "   deploy-gpuoperator  -- deploy Nvidia GPU Operator using helmchart"
-	@echo "   deploy-nriconfig    -- deploy NRI containerd plugin using helmchart"
+	@echo ""
+	@echo "Cluster targets:"
+	@echo "   check-deps             -- check if required binaries are available"
+	@echo "   cluster                -- cluster-create, cluster-nodepool, and cluster-credentials"
+	@echo "   cluster-create         -- create a new AKS cluster"
+	@echo "   cluster-nodepool       -- create GPU nodepool (adds --os-sku Ubuntu if ENABLE_IB=true)"
+	@echo "   cluster-credentials    -- download the cluster credentials (kubeconfig)"
+	@echo "   cluster-clean          -- completely delete created AKS cluster"
+	@echo ""
+	@echo "Deploy targets:"
+	@echo "   deploy-gpuoperator     -- deploy Nvidia GPU Operator (adds nfd.enabled=false if ENABLE_IB=true)"
+	@echo "   deploy-nri             -- deploy NRI ulimit-adjuster plugin (raises locked memory limits for GPU/RDMA pods)"
+	@echo ""
+	@echo "InfiniBand targets (set ENABLE_IB=true):"
+	@echo "   register-ib-feature    -- register AKS InfiniBand support feature"
+	@echo "   deploy-networkoperator -- deploy Nvidia Network Operator + NFD rule"
+	@echo "   deploy-nicpolicy       -- deploy NicClusterPolicy CR (NIC_POLICY=$(NIC_POLICY))"
+	@echo "   verify-ib              -- check Network Operator and RDMA resource status"
 
 check-deps:
 	@which az
@@ -37,7 +54,7 @@ check-deps:
 
 clean: cluster-clean
 cluster: cluster-create cluster-nodepool cluster-credentials
-deploy: deploy-gpuoperator deploy-nriconfig
+deploy: deploy-gpuoperator deploy-nri
 
 cluster-clean:
 	@echo "Deleting Azure Resource Group ${RESOURCE_GROUP} in the background..."
@@ -53,32 +70,73 @@ cluster-clean:
 	@echo "Cleanup initiated. The resource group ${RESOURCE_GROUP} is deleting in the background."
 
 cluster-create:
-	@echo "Creating Resource Group"
-	az group create --name "${RESOURCE_GROUP}" --location "${LOCATION}"
+	@echo "Creating Resource Group (skipping if it already exists)"
+	az group show --name "${RESOURCE_GROUP}" > /dev/null 2>&1 || \
+		az group create --name "${RESOURCE_GROUP}" --location "${LOCATION}"
 	@echo "Creating AKS Cluster (control plane)"
-	az aks create --resource-group "${RESOURCE_GROUP}" --name "${CLUSTER_NAME}" --node-count "${CONTROL_NODE_COUNT}" \
-		--node-vm-size "${CONTROL_SKU}" --ssh-key-value "${SSH_KEY_FILE}" \
+	az aks create --resource-group "${RESOURCE_GROUP}" --name "${CLUSTER_NAME}" --location "${LOCATION}" \
+		--node-count "${CONTROL_NODE_COUNT}" --node-vm-size "${CONTROL_SKU}" --ssh-key-value "${SSH_KEY_FILE}" \
 		--tags "owner=$(shell az account show --query user.name -o tsv)" $(CLUSTER_TAGS:%=%)
 
 cluster-nodepool:
 	@echo "Adding GPU Node Pool"
 	az aks nodepool add --resource-group "${RESOURCE_GROUP}" --cluster-name "${CLUSTER_NAME}" \
 		--name "${NODEPOOL_NAME}" --node-count "${NODE_COUNT}" --node-vm-size "${GPU_SKU}" \
-		--gpu-driver none --labels "${GPU_NODE_LABEL}"
+		--gpu-driver none --labels "${GPU_NODE_LABEL}" $(_NODEPOOL_IB_FLAGS)
 
 cluster-credentials:
 	@echo "Getting Cluster Credentials"
 	az aks get-credentials --resource-group "${RESOURCE_GROUP}" --name "${CLUSTER_NAME}" --overwrite-existing
 
-deploy-gpuoperator:
-	@echo "Deploying Nvidia GPU Operator"
+register-ib-feature:
+	@echo "Registering AKS InfiniBand Support feature..."
+	az feature register --name AKSInfinibandSupport --namespace Microsoft.ContainerService
+	@echo "Check status with:"
+	@echo "  az feature show --namespace Microsoft.ContainerService --name AKSInfinibandSupport --query properties.state -o tsv"
+
+deploy-networkoperator:
+	@echo "Creating network-operator namespace with privileged pod security..."
+	kubectl create ns network-operator --dry-run=client -o yaml | kubectl apply -f -
+	kubectl label --overwrite ns network-operator pod-security.kubernetes.io/enforce=privileged
+	@echo "Deploying NVIDIA Network Operator ${NETWORK_OPERATOR_VERSION}"
 	helm repo add nvidia https://helm.ngc.nvidia.com/nvidia
 	helm repo update
-	helm install --wait -n gpu-operator --create-namespace \
+	helm upgrade --install --create-namespace -n network-operator \
+		network-operator nvidia/network-operator \
+		-f ./network-operator/values.yaml \
+		--version "${NETWORK_OPERATOR_VERSION}"
+	@echo "Applying NodeFeatureRule for Mellanox NIC detection..."
+	kubectl apply -f ./network-operator/nfd-rule.yaml
+
+deploy-nicpolicy:
+	@echo "Deploying NicClusterPolicy ($(NIC_POLICY))..."
+	kubectl apply -f ./network-operator/nicclusterpolicy-$(NIC_POLICY).yaml
+	@echo "MOFED driver installation will take 10-15 minutes. Run 'make verify-ib' to monitor."
+
+verify-ib:
+	@echo "=== Network Operator Pods ==="
+	@kubectl -n network-operator get pods -o wide
+	@echo ""
+	@echo "=== NicClusterPolicy State ==="
+	@kubectl get nicclusterpolicy nic-cluster-policy -o jsonpath='{.status.state}{"\n"}' 2>/dev/null || echo "Not found or no status yet"
+	@echo ""
+	@echo "=== Nodes with InfiniBand ==="
+	@kubectl get nodes -l "feature.node.kubernetes.io/rdma-infiniband.capable=true" --no-headers 2>/dev/null || echo "No labeled nodes found yet"
+	@echo ""
+	@echo "=== RDMA Resources on Nodes ==="
+	@kubectl get nodes -o json | jq -r '.items[] | "\(.metadata.name): rdma/shared_ib=\(.status.allocatable["rdma/shared_ib"] // "N/A"), rdma/ib=\(.status.allocatable["rdma/ib"] // "N/A")"' 2>/dev/null || echo "Could not query RDMA resources"
+
+deploy-gpuoperator:
+	@echo "Deploying Nvidia GPU Operator ${GPU_OPERATOR_VERSION}"
+	kubectl create ns gpu-operator --dry-run=client -o yaml | kubectl apply -f -
+	kubectl label --overwrite ns gpu-operator pod-security.kubernetes.io/enforce=privileged
+	helm repo add nvidia https://helm.ngc.nvidia.com/nvidia
+	helm repo update
+	helm upgrade --install --wait -n gpu-operator --create-namespace \
 		gpu-operator nvidia/gpu-operator \
 		--version "${GPU_OPERATOR_VERSION}" \
-		--set "driver.rdma.enabled=true"
+		--set "driver.rdma.enabled=true" $(_GPU_OP_IB_FLAGS)
 
-deploy-nriconfig:
-	@echo "Deploying NRI plugin"
+deploy-nri:
+	@echo "Deploying NRI ulimit-adjuster plugin"
 	helm upgrade --install nri-setup ./nri-config/ --namespace "${NRI_NAMESPACE}" --create-namespace
