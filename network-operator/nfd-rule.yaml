@@ -1,0 +1,33 @@
+# NodeFeatureRule for labeling nodes with InfiniBand-capable Mellanox NICs.
+#
+# NFD discovers PCI devices on each node and evaluates this rule.
+# Nodes that match get the label "rdma-infiniband.capable=true", which the
+# NicClusterPolicy uses in its nodeAffinity to schedule MOFED driver and
+# device plugin pods only on InfiniBand nodes.
+#
+# Two labels are set:
+#   pci-15b3.present       - Required by Network Operator (hardcoded in DaemonSet nodeSelector)
+#   rdma-infiniband.capable - Used by NicClusterPolicy nodeAffinity for additional filtering
+#
+# By matching on PCI class 0207 (InfiniBand controller) rather than just
+# vendor 15b3, both labels only land on nodes with actual InfiniBand hardware.
+# AKS control plane nodes have Mellanox Ethernet NICs (class 0200) and are excluded.
+#
+# Vendor 15b3 = Mellanox Technologies (NVIDIA Networking)
+# Class  0207 = InfiniBand controller
+# Class  0200 = Ethernet controller (excluded)
+apiVersion: nfd.k8s-sigs.io/v1alpha1
+kind: NodeFeatureRule
+metadata:
+  name: nfd-network-rule
+spec:
+  rules:
+    - name: "nfd-network-rule"
+      labels:
+        "feature.node.kubernetes.io/rdma-infiniband.capable": "true"
+        "feature.node.kubernetes.io/pci-15b3.present": "true"
+      matchFeatures:
+        - feature: pci.device
+          matchExpressions:
+            vendor: {op: In, value: ["15b3"]}
+            class: {op: In, value: ["0207"]}
