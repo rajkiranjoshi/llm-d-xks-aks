@@ -30,6 +30,9 @@ This repository contains a `Makefile` designed to facilitate AKS cluster creatio
 | `GPU_NODE_LABEL` | `sku=gpu`        | Label to add to all GPU nodes |
 | `NRI_NAMESPACE`  | `kube-system`    | Namespace in which to deploy NRI plugin |
 | `CLUSTER_TAGS`   | ` `              | Cluster tags to add to the AKS cluster. Multiple tags can be separated by space |
+| `ENABLE_IB`      | ` `              | Turn this to "True" in order to enable InfiniBand support |
+| `NETWORK_OPERATOR_VERSION` | `v26.1.0` | Nvidia Network Operator version deplyed for IB support |
+| `NIC_POLICY`    | `rdma-shared-device-plugin` | What NicClusterPolicy to deploy when calling `deploy-nicpolicy` |
 
 In order to override any of the variables:
 
@@ -49,6 +52,9 @@ The Makefile provides a couple of generic targets:
 | `clean`   | Completely delete AKS cluster, this will remove all worker and control planes nodes and any configuration associated with it. Use with caution! |
 | `cluster` | Create a new cluster from scratch and download kubeconfig |
 | `deploy`  | Deploy GPU Operator to provide Nvidia drivers and NRI plugin on worker nodes |
+| `register-ib-feature` | Register AKS InfiniBand support feature |
+| `deploy-networkoperator` | Deploy Nvidia Network Operator |
+| `deploy-nicpolicy` | Apply NicClusterPolicy for the network operator |
 | `help`    | Help with all the available make targets |
 
 
