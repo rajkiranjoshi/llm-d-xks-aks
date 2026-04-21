@@ -17,6 +17,8 @@ Commands:
   list                       List all managed users and their roles
   promote <username>         Grant llmd-admin (cluster-admin) role to user
   demote <username>          Revoke llmd-admin role from user
+  suspend <username>         Temporarily revoke all access (preserves namespace/SA)
+  resume <username>          Restore access after suspension
   kubeconfig <username>      Generate a standalone kubeconfig for the user
 
 EOF
@@ -117,11 +119,6 @@ cmd_list() {
   local bindings
   bindings="$(kubectl get clusterrolebindings -l "${LABEL_KEY}" -o jsonpath='{.items[*].metadata.name}' 2>/dev/null)"
 
-  if [[ -z "$bindings" ]]; then
-    echo "  (none)"
-    return
-  fi
-
   # Collect unique users and their roles
   local user_users="" admin_users=""
   for binding in $bindings; do
@@ -132,17 +129,34 @@ cmd_list() {
     fi
   done
 
-  # Get sorted unique usernames
-  local all_users
-  all_users="$(echo "$user_users $admin_users" | tr ' ' '\n' | sort -u | grep -v '^$')"
+  # Also find suspended users (they have no bindings but have labeled namespaces)
+  local suspended_users=""
+  suspended_users="$(kubectl get ns -l "llmd.io/suspended=true" -o jsonpath='{range .items[*]}{.metadata.labels.llmd\.io/user}{"\n"}{end}' 2>/dev/null | grep -v '^$' || true)"
 
-  for user in $all_users; do
-    local roles=""
+  local all_combined
+  all_combined="$(echo "$user_users $admin_users $suspended_users" | tr ' ' '\n' | sort -u | grep -v '^$')"
+
+  if [[ -z "$all_combined" ]]; then
+    echo "  (none)"
+    return
+  fi
+
+  for user in $all_combined; do
+    local roles="" suspended=false
     echo "$user_users" | grep -qw "$user" && roles="user"
     if echo "$admin_users" | grep -qw "$user"; then
       [[ -n "$roles" ]] && roles="${roles},admin" || roles="admin"
     fi
-    printf "  %-20s %-12s %s\n" "$user" "$roles" "$(ns_for_user "$user")"
+    if echo "$suspended_users" | grep -qw "$user"; then
+      suspended=true
+    fi
+    if $suspended; then
+      local prev_roles
+      prev_roles="$(kubectl get ns "$(ns_for_user "$user")" -o jsonpath='{.metadata.annotations.llmd\.io/suspended-roles}' 2>/dev/null)"
+      printf "  %-20s %-12s %s\n" "$user" "SUSPENDED" "$(ns_for_user "$user") (was: ${prev_roles})"
+    else
+      printf "  %-20s %-12s %s\n" "$user" "$roles" "$(ns_for_user "$user")"
+    fi
   done
 }
 
@@ -176,6 +190,86 @@ cmd_demote() {
   kubectl delete clusterrolebinding "${ADMIN_ROLE}:${user}" --ignore-not-found
 
   echo "User '${user}' demoted to regular user."
+}
+
+cmd_suspend() {
+  local user="${1:?Usage: $(basename "$0") suspend <username>}"
+  local ns
+  ns="$(ns_for_user "$user")"
+
+  if ! kubectl get ns "$ns" &>/dev/null; then
+    echo "Error: namespace '${ns}' not found for user '${user}'" >&2
+    exit 1
+  fi
+
+  # Determine current roles before removing bindings
+  local roles=""
+  kubectl get clusterrolebinding "${USER_ROLE}:${user}" &>/dev/null && roles="user"
+  if kubectl get clusterrolebinding "${ADMIN_ROLE}:${user}" &>/dev/null; then
+    [[ -n "$roles" ]] && roles="${roles},admin" || roles="admin"
+  fi
+
+  if [[ -z "$roles" ]]; then
+    echo "User '${user}' has no active role bindings (already suspended?)."
+    return
+  fi
+
+  # Store roles in annotation so resume can restore them
+  kubectl annotate --overwrite ns "$ns" "llmd.io/suspended-roles=${roles}"
+  kubectl label --overwrite ns "$ns" "llmd.io/suspended=true"
+
+  echo "Removing ClusterRoleBindings for '${user}'..."
+  kubectl delete clusterrolebinding "${USER_ROLE}:${user}" --ignore-not-found
+  kubectl delete clusterrolebinding "${ADMIN_ROLE}:${user}" --ignore-not-found
+
+  echo "User '${user}' suspended. Access revoked, namespace preserved."
+}
+
+cmd_resume() {
+  local user="${1:?Usage: $(basename "$0") resume <username>}"
+  local ns
+  ns="$(ns_for_user "$user")"
+
+  if ! kubectl get ns "$ns" &>/dev/null; then
+    echo "Error: namespace '${ns}' not found for user '${user}'" >&2
+    exit 1
+  fi
+
+  local roles
+  roles="$(kubectl get ns "$ns" -o jsonpath='{.metadata.annotations.llmd\.io/suspended-roles}' 2>/dev/null)"
+
+  if [[ -z "$roles" ]]; then
+    echo "Error: no suspension record found for '${user}'. Was the user suspended?" >&2
+    exit 1
+  fi
+
+  ensure_rbac
+
+  if [[ "$roles" == *"user"* ]]; then
+    echo "Restoring ClusterRole '${USER_ROLE}' for '${user}'..."
+    kubectl create clusterrolebinding "${USER_ROLE}:${user}" \
+      --clusterrole="$USER_ROLE" \
+      --serviceaccount="${ns}:${user}" \
+      --dry-run=client -o yaml | \
+      kubectl label --local -f - "${LABEL_KEY}=${user}" -o yaml | \
+      kubectl apply -f -
+  fi
+
+  if [[ "$roles" == *"admin"* ]]; then
+    echo "Restoring ClusterRole '${ADMIN_ROLE}' for '${user}'..."
+    kubectl create clusterrolebinding "${ADMIN_ROLE}:${user}" \
+      --clusterrole="$ADMIN_ROLE" \
+      --serviceaccount="${ns}:${user}" \
+      --dry-run=client -o yaml | \
+      kubectl label --local -f - "${LABEL_KEY}=${user}" -o yaml | \
+      kubectl apply -f -
+  fi
+
+  # Clean up suspension markers
+  kubectl annotate ns "$ns" "llmd.io/suspended-roles-"
+  kubectl label ns "$ns" "llmd.io/suspended-"
+
+  echo "User '${user}' resumed with roles: ${roles}."
 }
 
 cmd_kubeconfig() {
@@ -238,6 +332,8 @@ case "$1" in
   list)      shift; cmd_list "$@" ;;
   promote)   shift; cmd_promote "$@" ;;
   demote)    shift; cmd_demote "$@" ;;
+  suspend)   shift; cmd_suspend "$@" ;;
+  resume)    shift; cmd_resume "$@" ;;
   kubeconfig) shift; cmd_kubeconfig "$@" ;;
   *)         usage ;;
 esac
