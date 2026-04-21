@@ -46,6 +46,7 @@ help:
 	@echo "   deploy-gpuoperator     -- deploy Nvidia GPU Operator (adds nfd.enabled=false if ENABLE_IB=true)"
 	@echo "   deploy-nri             -- deploy NRI ulimit-adjuster plugin (raises locked memory limits for GPU/RDMA pods)"
 	@echo "   deploy-monitoring      -- enable Azure Managed Prometheus metrics scraping"
+	@echo "   deploy-llmd-monitoring -- deploy llm-d Prometheus+Grafana stack with DOCA RDMA metrics"
 	@echo ""
 	@echo "InfiniBand targets (set ENABLE_IB=true):"
 	@echo "   register-ib-feature    -- register AKS InfiniBand support feature"
@@ -178,3 +179,21 @@ deploy-monitoring:
 	@echo "Enabling Azure Managed Prometheus metrics scraping"
 	az aks update --resource-group "${RESOURCE_GROUP}" --name "${CLUSTER_NAME}" \
 		--enable-azure-monitor-metrics
+
+deploy-llmd-monitoring:
+	@echo "Deploying llm-d Prometheus + Grafana stack..."
+	@if [ ! -d /tmp/llm-d-monitoring ]; then \
+		git clone --depth 1 --filter=blob:none --sparse \
+			https://github.com/llm-d/llm-d.git /tmp/llm-d-monitoring && \
+		cd /tmp/llm-d-monitoring && git sparse-checkout set docs/monitoring; \
+	fi
+	cd /tmp/llm-d-monitoring/docs/monitoring && bash ./scripts/install-prometheus-grafana.sh --enable-tls
+	@echo "Applying DOCA telemetry RDMA ServiceMonitor..."
+	kubectl apply -f ./monitoring/doca-telemetry-rdma.yaml
+	@echo "Loading DOCA RDMA Grafana dashboard..."
+	kubectl create configmap llmd-doca-rdma-network \
+		--from-file=doca-rdma-network-dashboard.json=./monitoring/doca-rdma-network-dashboard.json \
+		-n llm-d-monitoring --dry-run=client -o yaml | \
+		kubectl label --local -f - grafana_dashboard=1 -o yaml | \
+		kubectl apply -f -
+	@echo "llm-d monitoring deployed. DOCA RDMA metrics + dashboard ready."
