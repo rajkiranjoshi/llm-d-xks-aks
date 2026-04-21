@@ -156,7 +156,7 @@
           "custom": {
             "axisBorderShow": false,
             "axisCenteredZero": true,
-            "axisLabel": "TX ↑  /  ↓ RX",
+            "axisLabel": "RX ↓  /  ↑ TX",
             "axisPlacement": "auto",
             "barAlignment": 0,
             "drawStyle": "line",
@@ -172,15 +172,7 @@
           },
           "unit": "Bps"
         },
-        "overrides": [
-          {
-            "matcher": { "id": "byRegexp", "options": "^RX" },
-            "properties": [
-              { "id": "custom.transform", "value": "negative-Y" },
-              { "id": "custom.stacking", "value": { "group": "B", "mode": "normal" } }
-            ]
-          }
-        ]
+        "overrides": []
       },
       "options": {
         "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom", "sortBy": "Max", "sortDesc": true },
@@ -195,7 +187,7 @@
         },
         {
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-          "expr": "rate(port_rcv_data{source=~\"$node_repeat\", hca=~\"$hca\"}[$__rate_interval]) * 4",
+          "expr": "-rate(port_rcv_data{source=~\"$node_repeat\", hca=~\"$hca\"}[$__rate_interval]) * 4",
           "legendFormat": "RX {{hca}}",
           "refId": "RX"
         }
