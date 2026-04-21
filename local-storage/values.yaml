@@ -1,0 +1,7 @@
+mountPath: /mnt/local-nvme-storage
+nodeSelector:
+  agentpool: gpunp
+tolerations:
+  - key: nvidia.com/gpu
+    operator: Exists
+    effect: NoSchedule
