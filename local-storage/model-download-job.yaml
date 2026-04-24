@@ -55,6 +55,9 @@ spec:
                 echo "Failed models:$FAILED"
                 exit 1
               fi
+              echo "Fixing permissions on model cache for non-root containers..."
+              chmod -R a+rX /model-cache
+              find /model-cache -type d -exec chmod a+rwx {} +
           env:
             - name: HF_HOME
               value: /model-cache
