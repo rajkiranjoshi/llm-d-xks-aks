@@ -63,9 +63,11 @@ rules:
     resources: ["poddisruptionbudgets"]
     verbs: ["*"]
 
-  # RBAC within namespaces (users can create Roles/RoleBindings in their own namespaces)
+  # RBAC: namespace-scoped and cluster-scoped
+  # ClusterRoles/Bindings needed because llm-d Helm charts create cluster-scoped
+  # RBAC for the EPP (e.g., gaie-pd-<ns>-epp ClusterRole)
   - apiGroups: ["rbac.authorization.k8s.io"]
-    resources: ["roles", "rolebindings"]
+    resources: ["roles", "rolebindings", "clusterroles", "clusterrolebindings"]
     verbs: ["*"]
 
   # Prometheus monitoring CRDs
@@ -79,8 +81,13 @@ rules:
     verbs: ["*"]
 
   # Inference extension CRDs (for llm-d endpoint picker)
-  - apiGroups: ["inference.networking.x-k8s.io"]
+  - apiGroups: ["inference.networking.x-k8s.io", "inference.networking.k8s.io"]
     resources: ["inferencemodels", "inferencepools"]
+    verbs: ["*"]
+
+  # AgentGateway CRDs (llm-d gateway provider)
+  - apiGroups: ["agentgateway.dev"]
+    resources: ["agentgatewayparameters", "agentgatewaybackends", "agentgatewaypolicies"]
     verbs: ["*"]
 
   # Leases (debugging, leader election visibility)
