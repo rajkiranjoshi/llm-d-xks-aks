@@ -626,11 +626,11 @@
         "type": "query"
       },
       {
-        "current": {},
+        "current": { "selected": true, "text": ["All"], "value": ["$__all"] },
         "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
         "definition": "label_values(port_rcv_data, source)",
         "hide": 0,
-        "includeAll": false,
+        "includeAll": true,
         "label": "Node (per-panel repeat)",
         "multi": true,
         "name": "node_repeat",
