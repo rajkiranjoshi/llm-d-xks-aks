@@ -43,7 +43,7 @@ help:
 	@echo "   cluster-clean          -- completely delete created AKS cluster"
 	@echo ""
 	@echo "Deploy targets:"
-	@echo "   deploy-gpuoperator     -- deploy Nvidia GPU Operator (adds nfd.enabled=false if ENABLE_IB=true)"
+	@echo "   deploy-gpuoperator     -- deploy Nvidia GPU Operator with IBGDA kernel params (adds nfd.enabled=false if ENABLE_IB=true)"
 	@echo "   deploy-nri             -- deploy NRI ulimit-adjuster plugin (raises locked memory limits for GPU/RDMA pods)"
 	@echo "   deploy-monitoring      -- enable Azure Managed Prometheus metrics scraping"
 	@echo "   deploy-llmd-monitoring -- deploy llm-d Prometheus+Grafana stack with DOCA RDMA metrics"
@@ -156,12 +156,14 @@ deploy-gpuoperator:
 	@echo "Deploying Nvidia GPU Operator ${GPU_OPERATOR_VERSION}"
 	kubectl create ns gpu-operator --dry-run=client -o yaml | kubectl apply -f -
 	kubectl label --overwrite ns gpu-operator pod-security.kubernetes.io/enforce=privileged
+	kubectl apply -f ./gpu-operator/nvidia-kernel-module-params.yaml
 	helm repo add nvidia https://helm.ngc.nvidia.com/nvidia
 	helm repo update
 	helm upgrade --install --wait -n gpu-operator --create-namespace \
 		gpu-operator nvidia/gpu-operator \
 		--version "${GPU_OPERATOR_VERSION}" \
 		--set "driver.rdma.enabled=true" \
+		--set "driver.kernelModuleConfig.name=nvidia-kernel-module-params" \
 		--set "daemonsets.tolerations[0].key=nvidia.com/gpu" \
 		--set "daemonsets.tolerations[0].effect=NoSchedule" \
 		--set "daemonsets.tolerations[0].operator=Exists" \
