@@ -90,6 +90,21 @@ rules:
     resources: ["agentgatewayparameters", "agentgatewaybackends", "agentgatewaypolicies"]
     verbs: ["*"]
 
+  # LeaderWorkerSet (for wide-EP / multi-node LWS deployments)
+  - apiGroups: ["leaderworkerset.x-k8s.io"]
+    resources: ["leaderworkersets"]
+    verbs: ["*"]
+
+  # CRDs: llm-d prereq scripts install Gateway API and GAIE CRDs
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["*"]
+
+  # Admission policies: Gateway API CRDs include ValidatingAdmissionPolicies
+  - apiGroups: ["admissionregistration.k8s.io"]
+    resources: ["validatingadmissionpolicies", "validatingadmissionpolicybindings"]
+    verbs: ["*"]
+
   # Leases (debugging, leader election visibility)
   - apiGroups: ["coordination.k8s.io"]
     resources: ["leases"]
