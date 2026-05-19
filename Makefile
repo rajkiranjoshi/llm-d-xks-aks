@@ -163,6 +163,7 @@ deploy-gpuoperator:
 		--version "${GPU_OPERATOR_VERSION}" \
 		--set "driver.rdma.enabled=true" \
 		--set "driver.kernelModuleConfig.name=nvidia-kernel-module-params" \
+		--set "gdrcopy.enabled=true" \
 		--set "daemonsets.tolerations[0].key=nvidia.com/gpu" \
 		--set "daemonsets.tolerations[0].effect=NoSchedule" \
 		--set "daemonsets.tolerations[0].operator=Exists" \
