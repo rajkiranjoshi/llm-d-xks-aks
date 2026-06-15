@@ -75,6 +75,25 @@ kubectl get node
 
 This will create a new Azure resource group, a new AKS cluster and attach a new Node pool with GPUs. Please note the script *does not* deploy gpu drivers (by using `--gpu-driver none`). The access credentials are downloaded and added to the default `kubectl` context. You should be able to test the new deployment with a simple `kubectl get node`. The new AKS cluster is tagged with the Azure username used for creation and additionag tags can be added by using the `CLUSTER_TAGS` environment variable.
 
+Local NVMe storage & model caching
+---
+
+GPU VM SKUs with local NVMe disks (e.g. `Standard_ND40rs_v2`) can use the `local-storage/` Helm chart to set up a RAID-0 array across the NVMe drives, mounted at `/mnt/local-nvme-storage`. This provides high-throughput local storage for model weights.
+
+```bash
+helm upgrade --install local-nvme-storage ./local-storage/
+```
+
+### Pre-downloading models
+
+The `local-storage/model-download-job.yaml` defines a Kubernetes Job that pre-downloads HuggingFace models to the local NVMe cache so that vLLM containers don't wait for downloads at startup:
+
+```bash
+kubectl apply -f local-storage/model-download-job.yaml
+```
+
+The job runs as root to write to the `hostPath` mount and then fixes permissions (`chmod -R a+rX`) so non-root containers (e.g. vLLM) can read the cached model files. The list of models to download is maintained inside the Job manifest.
+
 Cluster configuration
 ---
 
