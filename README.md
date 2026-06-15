@@ -131,10 +131,10 @@ All the pods should be in "Running" state.
 RDMA Monitoring
 ---
 
-The `deploy-llmd-monitoring` Makefile target deploys a Prometheus + Grafana stack with DOCA RDMA metrics collection:
+The `deploy-doca-rdma` Makefile target deploys the DOCA RDMA ServiceMonitor and Grafana dashboard. It assumes Prometheus and Grafana are already running on the cluster (e.g. installed by the llm-d monitoring stack):
 
 ```bash
-make deploy-llmd-monitoring
+make deploy-doca-rdma
 ```
 
 This sets up:
