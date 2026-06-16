@@ -10,6 +10,41 @@ Prerequisites
 * `helm`
 
 
+User management
+---
+
+The `user-mgmt.sh` script manages multi-tenant access to the cluster. Each user gets an isolated namespace, a ServiceAccount, and RBAC bindings:
+
+```bash
+# Add a user with the default llmd-user role
+./user-mgmt.sh add alice
+
+# Add a user with admin privileges
+./user-mgmt.sh add bob --role admin
+
+# List all users and their roles
+./user-mgmt.sh list
+
+# Temporarily revoke access (preserves namespace and resources)
+./user-mgmt.sh suspend alice
+
+# Restore access
+./user-mgmt.sh resume alice
+
+# Remove a user entirely
+./user-mgmt.sh remove alice
+```
+
+Two ClusterRoles are provided in `rbac/`:
+
+| Role | Description |
+| ---- | ----------- |
+| `llmd-user` | Standard user role with permissions to deploy llm-d workloads, manage CRDs (Gateway API, GAIE, LeaderWorkerSet), and use cluster-scoped RBAC within their namespace |
+| `llmd-admin` | Full cluster-admin privileges |
+
+User namespaces are labeled with `pod-security.kubernetes.io/enforce=privileged` to allow GPU and RDMA workloads that require `IPC_LOCK` capabilities and `hostPath` volumes.
+
+
 Makefile structure
 ---
 
