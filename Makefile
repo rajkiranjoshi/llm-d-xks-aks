@@ -9,6 +9,10 @@ SSH_KEY_FILE ?= ${HOME}/.ssh/azure.pub
 GPU_OPERATOR_VERSION ?= v25.10.0
 NODEPOOL_NAME ?= gpunp
 GPU_NODE_LABEL ?= sku=gpu
+SYSTEM_NODEPOOL_NAME ?= systemnp
+CPU_NODEPOOL_NAME ?= cpunp
+CPU_SKU ?= Standard_D5_v2
+CPU_NODE_COUNT ?= 2
 NRI_NAMESPACE ?= kube-system
 CLUSTER_TAGS ?= 
 
@@ -33,11 +37,13 @@ help:
 	@echo "   cluster                -- cluster-create, cluster-nodepool, and cluster-credentials"
 	@echo "   cluster-create         -- create a new AKS cluster"
 	@echo "   cluster-nodepool       -- create GPU nodepool (adds --os-sku Ubuntu if ENABLE_IB=true)"
+	@echo "   cluster-cpunodepool    -- create CPU worker nodepool (CPU_SKU=$(CPU_SKU), CPU_NODE_COUNT=$(CPU_NODE_COUNT))"
 	@echo "   cluster-credentials    -- download the cluster credentials (kubeconfig)"
+	@echo "   cluster-delete-cpunp   -- delete CPU worker nodepool"
 	@echo "   cluster-clean          -- completely delete created AKS cluster"
 	@echo ""
 	@echo "Deploy targets:"
-	@echo "   deploy-gpuoperator     -- deploy Nvidia GPU Operator (adds nfd.enabled=false if ENABLE_IB=true)"
+	@echo "   deploy-gpuoperator     -- deploy Nvidia GPU Operator with IBGDA kernel params (adds nfd.enabled=false if ENABLE_IB=true)"
 	@echo "   deploy-nri             -- deploy NRI ulimit-adjuster plugin (raises locked memory limits for GPU/RDMA pods)"
 	@echo "   deploy-doca-rdma       -- deploy DOCA RDMA ServiceMonitor and Grafana dashboard (requires Prometheus+Grafana)"
 	@echo ""
@@ -54,7 +60,7 @@ check-deps:
 	@which helm
 
 clean: cluster-clean
-cluster: cluster-create cluster-nodepool cluster-credentials
+cluster: cluster-create cluster-credentials cluster-nodepool
 deploy: deploy-gpuoperator deploy-nri
 
 cluster-clean:
@@ -77,13 +83,35 @@ cluster-create:
 	@echo "Creating AKS Cluster (control plane)"
 	az aks create --resource-group "${RESOURCE_GROUP}" --name "${CLUSTER_NAME}" --location "${LOCATION}" \
 		--node-count "${CONTROL_NODE_COUNT}" --node-vm-size "${CONTROL_SKU}" --ssh-key-value "${SSH_KEY_FILE}" \
+		--nodepool-name "${SYSTEM_NODEPOOL_NAME}" \
+		--nodepool-labels "node.kubernetes.io/role=system" \
 		--tags "owner=$(shell az account show --query user.name -o tsv)" $(CLUSTER_TAGS:%=%)
 
 cluster-nodepool:
+	@echo "Labeling system nodepool nodes for kubectl visibility..."
+	kubectl label nodes -l agentpool=${SYSTEM_NODEPOOL_NAME} node-role.kubernetes.io/system= --overwrite
 	@echo "Adding GPU Node Pool"
 	az aks nodepool add --resource-group "${RESOURCE_GROUP}" --cluster-name "${CLUSTER_NAME}" \
 		--name "${NODEPOOL_NAME}" --node-count "${NODE_COUNT}" --node-vm-size "${GPU_SKU}" \
-		--gpu-driver none --labels "${GPU_NODE_LABEL}" $(_NODEPOOL_IB_FLAGS)
+		--gpu-driver none --labels "${GPU_NODE_LABEL}" "node.kubernetes.io/role=gpu-worker" \
+		--node-taints "nvidia.com/gpu=present:NoSchedule" $(_NODEPOOL_IB_FLAGS)
+	kubectl label nodes -l agentpool=${NODEPOOL_NAME} node-role.kubernetes.io/gpu-worker= --overwrite
+
+cluster-cpunodepool:
+	@echo "Adding CPU Worker Node Pool ($(CPU_NODEPOOL_NAME))"
+	az aks nodepool add --resource-group "${RESOURCE_GROUP}" --cluster-name "${CLUSTER_NAME}" \
+		--name "${CPU_NODEPOOL_NAME}" --node-count "${CPU_NODE_COUNT}" --node-vm-size "${CPU_SKU}" \
+		--labels "node.kubernetes.io/role=cpu-worker"
+	@echo "Tainting system nodepool ($(SYSTEM_NODEPOOL_NAME)) to reject non-system pods..."
+	az aks nodepool update --resource-group "${RESOURCE_GROUP}" --cluster-name "${CLUSTER_NAME}" \
+		--name "${SYSTEM_NODEPOOL_NAME}" --node-taints "CriticalAddonsOnly=true:NoSchedule"
+	kubectl label nodes -l agentpool=${CPU_NODEPOOL_NAME} node-role.kubernetes.io/cpu-worker= --overwrite
+
+cluster-delete-cpunp:
+	@echo "Deleting CPU Worker Node Pool ($(CPU_NODEPOOL_NAME))..."
+	az aks nodepool delete --resource-group "${RESOURCE_GROUP}" --cluster-name "${CLUSTER_NAME}" \
+		--name "${CPU_NODEPOOL_NAME}" --no-wait
+	@echo "Delete initiated (--no-wait). Check portal or 'az aks nodepool list' for progress."
 
 cluster-credentials:
 	@echo "Getting Cluster Credentials"
@@ -131,12 +159,23 @@ deploy-gpuoperator:
 	@echo "Deploying Nvidia GPU Operator ${GPU_OPERATOR_VERSION}"
 	kubectl create ns gpu-operator --dry-run=client -o yaml | kubectl apply -f -
 	kubectl label --overwrite ns gpu-operator pod-security.kubernetes.io/enforce=privileged
+	kubectl apply -f ./gpu-operator/nvidia-kernel-module-params.yaml
 	helm repo add nvidia https://helm.ngc.nvidia.com/nvidia
 	helm repo update
 	helm upgrade --install --wait -n gpu-operator --create-namespace \
 		gpu-operator nvidia/gpu-operator \
 		--version "${GPU_OPERATOR_VERSION}" \
-		--set "driver.rdma.enabled=true" $(_GPU_OP_IB_FLAGS)
+		--set "driver.rdma.enabled=true" \
+		--set "driver.kernelModuleConfig.name=nvidia-kernel-module-params" \
+		--set "gdrcopy.enabled=true" \
+		--set "daemonsets.tolerations[0].key=nvidia.com/gpu" \
+		--set "daemonsets.tolerations[0].effect=NoSchedule" \
+		--set "daemonsets.tolerations[0].operator=Exists" \
+		--set "node.taints[0].key=nvidia.com/gpu" \
+		--set "node.taints[0].effect=NoSchedule" \
+		--set "node.taints[0].operator=Equal" \
+		--set "node.taints[0].value=present" \
+		$(_GPU_OP_IB_FLAGS)
 
 deploy-nri:
 	@echo "Deploying NRI ulimit-adjuster plugin"
