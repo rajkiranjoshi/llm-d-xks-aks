@@ -60,7 +60,7 @@ check-deps:
 	@which helm
 
 clean: cluster-clean
-cluster: cluster-create cluster-nodepool cluster-credentials
+cluster: cluster-create cluster-credentials cluster-nodepool
 deploy: deploy-gpuoperator deploy-nri
 
 cluster-clean:
@@ -88,11 +88,14 @@ cluster-create:
 		--tags "owner=$(shell az account show --query user.name -o tsv)" $(CLUSTER_TAGS:%=%)
 
 cluster-nodepool:
+	@echo "Labeling system nodepool nodes for kubectl visibility..."
+	kubectl label nodes -l agentpool=${SYSTEM_NODEPOOL_NAME} node-role.kubernetes.io/system= --overwrite
 	@echo "Adding GPU Node Pool"
 	az aks nodepool add --resource-group "${RESOURCE_GROUP}" --cluster-name "${CLUSTER_NAME}" \
 		--name "${NODEPOOL_NAME}" --node-count "${NODE_COUNT}" --node-vm-size "${GPU_SKU}" \
 		--gpu-driver none --labels "${GPU_NODE_LABEL}" "node.kubernetes.io/role=gpu-worker" \
 		--node-taints "nvidia.com/gpu=present:NoSchedule" $(_NODEPOOL_IB_FLAGS)
+	kubectl label nodes -l agentpool=${NODEPOOL_NAME} node-role.kubernetes.io/gpu-worker= --overwrite
 
 cluster-cpunodepool:
 	@echo "Adding CPU Worker Node Pool ($(CPU_NODEPOOL_NAME))"
@@ -102,6 +105,7 @@ cluster-cpunodepool:
 	@echo "Tainting system nodepool ($(SYSTEM_NODEPOOL_NAME)) to reject non-system pods..."
 	az aks nodepool update --resource-group "${RESOURCE_GROUP}" --cluster-name "${CLUSTER_NAME}" \
 		--name "${SYSTEM_NODEPOOL_NAME}" --node-taints "CriticalAddonsOnly=true:NoSchedule"
+	kubectl label nodes -l agentpool=${CPU_NODEPOOL_NAME} node-role.kubernetes.io/cpu-worker= --overwrite
 
 cluster-delete-cpunp:
 	@echo "Deleting CPU Worker Node Pool ($(CPU_NODEPOOL_NAME))..."
