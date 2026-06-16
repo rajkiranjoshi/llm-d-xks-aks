@@ -1,5 +1,9 @@
 nodeSelector:
   agentpool: gpunp
+tolerations:
+  - key: nvidia.com/gpu
+    operator: Exists
+    effect: NoSchedule
 
 adjuster:
   image: ghcr.io/containerd/nri/plugins/ulimit-adjuster
