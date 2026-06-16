@@ -84,21 +84,21 @@ cluster-create:
 	az aks create --resource-group "${RESOURCE_GROUP}" --name "${CLUSTER_NAME}" --location "${LOCATION}" \
 		--node-count "${CONTROL_NODE_COUNT}" --node-vm-size "${CONTROL_SKU}" --ssh-key-value "${SSH_KEY_FILE}" \
 		--nodepool-name "${SYSTEM_NODEPOOL_NAME}" \
-		--nodepool-labels "node-role.kubernetes.io/system=" \
+		--nodepool-labels "node.kubernetes.io/role=system" \
 		--tags "owner=$(shell az account show --query user.name -o tsv)" $(CLUSTER_TAGS:%=%)
 
 cluster-nodepool:
 	@echo "Adding GPU Node Pool"
 	az aks nodepool add --resource-group "${RESOURCE_GROUP}" --cluster-name "${CLUSTER_NAME}" \
 		--name "${NODEPOOL_NAME}" --node-count "${NODE_COUNT}" --node-vm-size "${GPU_SKU}" \
-		--gpu-driver none --labels "${GPU_NODE_LABEL}" "node-role.kubernetes.io/gpu-worker=" \
+		--gpu-driver none --labels "${GPU_NODE_LABEL}" "node.kubernetes.io/role=gpu-worker" \
 		--node-taints "nvidia.com/gpu=present:NoSchedule" $(_NODEPOOL_IB_FLAGS)
 
 cluster-cpunodepool:
 	@echo "Adding CPU Worker Node Pool ($(CPU_NODEPOOL_NAME))"
 	az aks nodepool add --resource-group "${RESOURCE_GROUP}" --cluster-name "${CLUSTER_NAME}" \
 		--name "${CPU_NODEPOOL_NAME}" --node-count "${CPU_NODE_COUNT}" --node-vm-size "${CPU_SKU}" \
-		--labels "node-role.kubernetes.io/cpu-worker="
+		--labels "node.kubernetes.io/role=cpu-worker"
 	@echo "Tainting system nodepool ($(SYSTEM_NODEPOOL_NAME)) to reject non-system pods..."
 	az aks nodepool update --resource-group "${RESOURCE_GROUP}" --cluster-name "${CLUSTER_NAME}" \
 		--name "${SYSTEM_NODEPOOL_NAME}" --node-taints "CriticalAddonsOnly=true:NoSchedule"
