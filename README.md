@@ -151,3 +151,26 @@ kubectl get pods -n "${LLMD_NAMESPACE}" -w
 
 All the pods should be in "Running" state.
 
+
+RDMA Monitoring
+---
+
+The `deploy-doca-rdma` Makefile target deploys the DOCA RDMA ServiceMonitor and Grafana dashboard. It assumes Prometheus and Grafana are already running on the cluster (e.g. installed by the llm-d monitoring stack):
+
+```bash
+make deploy-doca-rdma
+```
+
+This sets up:
+
+* **DOCA Telemetry Service**: The NVIDIA Network Operator runs `doca-telemetry-service` DaemonSet pods on GPU nodes that export InfiniBand/RDMA counters on port 9189.
+* **ServiceMonitor**: A headless Service (`doca-telemetry-metrics`) and Prometheus `ServiceMonitor` in `llm-d-monitoring` namespace scrape the DOCA metrics every 10 seconds.
+* **Grafana Dashboard**: The "RDMA Network — HCA Traffic" dashboard (provisioned via ConfigMap sidecar) visualizes per-node, per-HCA TX/RX traffic with stacked area charts. TX is shown as positive, RX as negative. All GPU nodes and HCAs (`mlx5_0` through `mlx5_7`) are displayed by default.
+
+The monitoring manifests live in the `monitoring/` directory:
+
+| File | Purpose |
+| ---- | ------- |
+| `doca-telemetry-rdma.yaml` | Headless Service + ServiceMonitor for DOCA metrics scraping |
+| `doca-rdma-network-dashboard.json` | Grafana dashboard JSON (provisioned as a ConfigMap) |
+
